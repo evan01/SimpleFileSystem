@@ -6,3 +6,4 @@ CMakeLists.txt
 .idea/SimpleFileSystem.iml
 .idea/vcs.xml
 .idea/workspace.xml
+*.o
