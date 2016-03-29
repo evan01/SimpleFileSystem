@@ -11,6 +11,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include "disk_emu.h"
 
 #endif /* sfs_api_h */

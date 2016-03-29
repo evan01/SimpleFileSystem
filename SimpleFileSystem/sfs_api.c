@@ -3,6 +3,7 @@
 //  SimpleFileSystem
 //
 //  This file contains the source code implementation of the file system
+//  You can always use xxd to read the disk
 //
 
 #include "sfs_api.h"
@@ -13,13 +14,13 @@
  with possible */
 static char *diskName = "Evan_Knox_sfs";
 static const int blockSize = 1024;
-static const int numBlocks = 30;
+static const int numBlocks = 4;
 
 
 /* Super block pointers */
 
 
-//This function will create an in memory block
+//This function will create an in memory block filled with '-'
 void* createBlock(){
     char *ptr = malloc(blockSize);
     for (int i = 0; i < blockSize; ++i) {
@@ -29,13 +30,29 @@ void* createBlock(){
     return ptr;
 }
 
+//This function will copy X number of bytes from the first pointer to the next
+void copyBytes(int numBytes, void *src, void *dest){
+
+        memcpy(dest,src,numBytes);
+}
+
 //This function creates a super block in the first block
 void createSuperBlock(){
-    //Write to the first and third data blocks...
-    char word[15] = "TEST TEST TEST";
-    void *buffer = createBlock();
-    buffer[9] = (void)'6';
-    buffer[10] = (void)'9';
+    //First create a properly formatted block in memory...
+    char *buffer = createBlock();
+
+    //The First 4 bytes will be the Magic field
+//    int magicVal = 1234;
+    char magicVal = '7';
+    copyBytes(4,&magicVal,buffer);
+
+    //The next 4 the Block Size
+
+    //The next 4 the file system size
+
+    //Then
+    buffer[9] = '6';
+    buffer[10] = '9';
 
     write_blocks(0, 1, buffer);
 //    printf("%d\n",);
