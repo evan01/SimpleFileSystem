@@ -10,6 +10,7 @@
 #define sfs_api_h
 
 #include <stdio.h>
+#include <stdlib.h>
 #include "disk_emu.h"
 
 #endif /* sfs_api_h */

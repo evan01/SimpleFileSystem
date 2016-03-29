@@ -7,7 +7,11 @@
 //
 
 #include <stdio.h>
+#include "sfs_api.h"
 
 int main(){
-    printf("Hello World");
+    printf("Hello World\n");
+    
+    mksfs(1);
+    
 }
