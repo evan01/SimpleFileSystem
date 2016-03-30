@@ -13,8 +13,11 @@
  Constants, only used when creating a brand new file system, to be replaced
  with possible */
 static char *diskName = "Evan_Knox_sfs";
-static const int blockSize = 1024;
-static const int numBlocks = 4;
+static const int blockSize = 1024;//TODO change these constants
+static const int totalBlocks = 4;
+
+//Pointer to free blocks
+int *freeBlocks;
 
 
 /* Super block pointers */
@@ -30,10 +33,34 @@ void* createBlock(){
     return ptr;
 }
 
+//This function will handle the writing to the disk and updating of data structures
+void write(int blk, int nblocks, void *buffer){
+
+    if(freeBlocks[blk]== 0){
+        //Then yes there are free blocks
+        write_blocks(blk, nblocks, buffer);
+    }else{
+        //There are no more free blocks
+        printf("Sorry, no more free blocks\n");
+    }
+
+}
+
 //This function will copy X number of bytes from the first pointer to the next
 void copyBytes(int numBytes, void *src, void *dest){
-
         memcpy(dest,src,numBytes);
+}
+
+//This function creates a brand new bit map
+void createBitMap(int numBlocks){
+    //(Memory) Create a virtual array representing the free blocks, it'll have it's own block
+    freeBlocks = createBlock();
+    for (int i = 0; i < numBlocks; ++i) {
+        freeBlocks[i] = 0;
+    }
+
+    //Then write this to disk
+    write(totalBlocks-1,1,freeBlocks);
 }
 
 //This function creates a super block in the first block
@@ -41,21 +68,14 @@ void createSuperBlock(){
     //First create a properly formatted block in memory...
     char *buffer = createBlock();
 
-    //The First 4 bytes will be the Magic field
-//    int magicVal = 1234;
     char magicVal = '7';
     copyBytes(4,&magicVal,buffer);
+    buffer[13] = 'L';
 
-    //The next 4 the Block Size
-
-    //The next 4 the file system size
-
-    //Then
     buffer[9] = '6';
     buffer[10] = '9';
 
-    write_blocks(0, 1, buffer);
-//    printf("%d\n",);
+    write(0,1,buffer);
 }
 
 //This function reads a pre-existing super block
@@ -74,11 +94,12 @@ void readSuperBlock(){
 void mksfs(int fresh){
 	if (fresh>=1){
 		/* Then we initialize a new disk */
-		init_fresh_disk(diskName,blockSize,numBlocks);
-        createSuperBlock();
+		init_fresh_disk(diskName,blockSize,totalBlocks); //Creates the fresh disk of propper size
+        createSuperBlock();//Creates the super block, sends it to disk
+        createBitMap(totalBlocks);//Creates the bit map block, sends it to disk
 	}else{
 		//Open an old disk, will use the same disk Name as before...
-        init_disk(diskName, blockSize, numBlocks);
+        init_disk(diskName, blockSize, totalBlocks);
         readSuperBlock();
 	}
     //This means that the file pointer fp is now initialized, this represents our disk
