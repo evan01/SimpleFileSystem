@@ -10,8 +10,8 @@
 #include "sfs_api.h"
 
 int main(){
-    printf("Hello World\n");
+    printf("Initializing the filesystem\n");
     
-    mksfs(1);
+    mksfs(-1);
     
 }

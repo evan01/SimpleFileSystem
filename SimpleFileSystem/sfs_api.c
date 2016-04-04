@@ -16,13 +16,34 @@
 static char *diskName = "Evan_Knox_sfs";
 static const int blockSize = 1024;
 static const int totalBlocks = 4;
+static const int NAMESIZE = 16;
+static const int EXTENSION_SIZE = 4;
+static const int INODE_TABLE_SIZE = 100;
 
-/* Super block pointers */
-char *superBlock;
-int *freeBlocks;//Array of all the free blocks
+/* Data Structures */
+//Inode structure to represent a single file
+struct iNode{
+    char name[NAMESIZE];
+    char extension[EXTENSION_SIZE];
+    int mode;
+    int size; //Size in blocks of the file
+    int blocks[totalBlocks];//Array of all the blocks belonging to the file
+    int status;
+};
 
+//Superblock structure
+struct Super_Block{
+    int blockSize;
+    int fileSystemSize;
+    int iNodeTableLength;
+    int freeBlocks[totalBlocks];
+    int rootDirPointer;
+};
 
-//TODO create an array of inodes called rootDirectory, this will hold all the file/directory information
+/* In memory data structures */
+struct iNode files[INODE_TABLE_SIZE]; //iNode table
+struct Super_Block *superBlock; //Super block
+
 //This function will create an in memory block filled with '-'
 void* createBlock(){
     char *ptr = malloc(blockSize);
@@ -36,9 +57,9 @@ void* createBlock(){
 //This function will handle the writing to the disk and updating of data structures
 void writeToDisk(int blk, int nblocks, void *buffer){
     //We can always overwrite the superBlock and the freeBlocks disk blocks
-    if(freeBlocks[blk]== 0 || blk == 0 || blk == totalBlocks-1){
+    if(superBlock->freeBlocks[blk]== 0 || blk == 0 || blk == totalBlocks-1 || blk == 1){
         //Then yes there are free blocks
-        freeBlocks[blk] = '1';
+        superBlock->freeBlocks[blk] = '1';
         write_blocks(blk, nblocks, buffer);
     }else{
         //There are no more free blocks
@@ -48,39 +69,38 @@ void writeToDisk(int blk, int nblocks, void *buffer){
 }
 
 //This function will copy X number of bytes from the first pointer to the next
-//Pretty redundant actually given it just calls memcpy
 void copyBytes(int numBytes, void *src, void *dest){
         memcpy(dest,src,numBytes);
 }
 
-//This function creates a brand new bit map
-void createBitMap(int numBlocks){
-    //(Memory) Create a virtual array representing the free blocks, it'll have it's own block
-    freeBlocks = createBlock();
-    for (int i = 0; i < numBlocks; ++i) {
-        freeBlocks[i] = '0';
+//This function creates a super block in the first block
+void createNewSystem(){
+    //Create an in memory superblock structure
+    superBlock = createBlock();
+    superBlock->blockSize = blockSize;
+    superBlock->fileSystemSize = blockSize*totalBlocks;
+    superBlock->iNodeTableLength = 0;//No files or directories in superdir to start
+    superBlock->rootDirPointer = 0;
+
+    //This function creates a brand new bit map
+    for (int i = 0; i < totalBlocks; ++i) {
+        superBlock->freeBlocks[i] = 0;
     }
 }
 
-//This function creates a super block in the first block
-void createSuperBlock(){
-    //First create a properly formatted block in memory...
+//This function reads pre-existing information on the disk and loads the memory data structures
+void loadSystemFromDisk(){
+    //First load the superblock
     superBlock = createBlock();
-
-    char magicVal = '7';
-    copyBytes(4,&magicVal,superBlock);
-    superBlock[13] = 'L';
-
-    superBlock[9] = '6';
-    superBlock[10] = '9';
-
-}
-
-//This function reads a pre-existing super block
-void readSuperBlock(){
-    //TODO implement this method
+    read_blocks(0,1,superBlock);
     
-    //First allocate the bit map
+    //Then set up the iNode table
+    int iNodeDiskSize = (superBlock->iNodeTableLength)* sizeof(struct iNode);
+
+    //Set up the root directory iNode
+    read_blocks(superBlock->rootDirPointer,1,files);
+    int a =2;
+
 }
 
 //This function will write the pre-existing data structures to disk
@@ -88,34 +108,28 @@ void writeMemToDisk(){
     
     //Update the super block
     writeToDisk(0,1,superBlock);
-    //Update the i-node Table
     
-    //Write the bit-map to the disk last
-    writeToDisk(totalBlocks-1,1,freeBlocks);
+    //Update the iNodeTable
+    //Write the entire iNode table to memory if the iNode table is super long
+    //Figure out how many blocks the iNode table takes up
+    int blocks_iNodeTable = (sizeof(struct iNode)*INODE_TABLE_SIZE)/(superBlock->blockSize);
+    writeToDisk(1,blocks_iNodeTable,files);
 }
 
 
-/*
-    REQUIRED LIBRARY FUNCTIONS, USED BY TEST FILES
-*/
-
-/*
-	This function creates the file system
-*/
+//This function creates the file system
 void mksfs(int fresh){
 	if (fresh>=1){
 		/* Then we initialize a new disk */
 		init_fresh_disk(diskName,blockSize,totalBlocks); //Creates the fresh disk of propper size
-        createBitMap(totalBlocks);//Creates the bit map block
-        createSuperBlock();//Creates the super block, sends it to disk
+        createNewSystem();//Creates the super block, sends it to disk
         
 	}else{
 		//Open an old disk, will use the same disk Name as before...
         init_disk(diskName, blockSize, totalBlocks);
-        readSuperBlock();
-        
+        loadSystemFromDisk();
 	}
-    //This means that the file pointer fp is now initialized, this represents our disk
+    //Write the current cached memory to the disk
     writeMemToDisk();
 }
 
