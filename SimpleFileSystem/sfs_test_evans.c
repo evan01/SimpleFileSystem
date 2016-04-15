@@ -12,6 +12,8 @@
 int main(){
     printf("Initializing the filesystem\n");
     
-    mksfs(-1);
+    mksfs(1);
+
+    system("xxd Evan_Knox_sfs ");
     
 }

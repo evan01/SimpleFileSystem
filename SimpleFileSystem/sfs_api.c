@@ -15,7 +15,7 @@
 //TODO change these constants
 static char *diskName = "Evan_Knox_sfs";
 static const int blockSize = 1024;
-static const int totalBlocks = 4;
+static const int TOTAL_BLOCKS = 4;
 static const int NAMESIZE = 16;
 static const int EXTENSION_SIZE = 4;
 static const int INODE_TABLE_SIZE = 100;
@@ -26,8 +26,9 @@ struct iNode{
     char name[NAMESIZE];
     char extension[EXTENSION_SIZE];
     int mode;
+    int type;//1 for directory, 0 otherwise
     int size; //Size in blocks of the file
-    int blocks[totalBlocks];//Array of all the blocks belonging to the file
+    int blocks[TOTAL_BLOCKS];//Array of all the blocks belonging to the file
     int status;
 };
 
@@ -36,12 +37,12 @@ struct Super_Block{
     int blockSize;
     int fileSystemSize;
     int iNodeTableLength;
-    int freeBlocks[totalBlocks];
-    int rootDirPointer;
+    int freeBlocks[TOTAL_BLOCKS];
+    int rootDirPointer; //The number in the iNode table to find the rootDir always 0
 };
 
 /* In memory data structures */
-struct iNode files[INODE_TABLE_SIZE]; //iNode table
+struct iNode iNodeTable[INODE_TABLE_SIZE]; //iNode table
 struct Super_Block *superBlock; //Super block
 
 //This function will create an in memory block filled with '-'
@@ -57,13 +58,13 @@ void* createBlock(){
 //This function will handle the writing to the disk and updating of data structures
 void writeToDisk(int blk, int nblocks, void *buffer){
     //We can always overwrite the superBlock and the freeBlocks disk blocks
-    if(superBlock->freeBlocks[blk]== 0 || blk == 0 || blk == totalBlocks-1 || blk == 1){
+    if(superBlock->freeBlocks[blk]== 0 || blk == 0 || blk == TOTAL_BLOCKS-1 || blk == 1){
         //Then yes there are free blocks
         superBlock->freeBlocks[blk] = '1';
         write_blocks(blk, nblocks, buffer);
     }else{
         //There are no more free blocks
-        printf("Sorry, the block requested B[%d/%d] isn't free\n",blk,totalBlocks);
+        printf("Sorry, the block requested B[%d/%d] isn't free\n",blk,TOTAL_BLOCKS);
     }
 
 }
@@ -73,19 +74,52 @@ void copyBytes(int numBytes, void *src, void *dest){
         memcpy(dest,src,numBytes);
 }
 
+int requestFreeBlock(){
+    for (int i = 0; i < TOTAL_BLOCKS; ++i) {
+        if(superBlock->freeBlocks[i]==0) {
+            superBlock->freeBlocks[i] = 1;
+            return i;
+        }
+    }
+    printf("ERROR, There are no free blocks\n");
+    return -1;//This means that there are no free blocks left
+}
+
+
 //This function creates a super block in the first block
 void createNewSystem(){
-    //Create an in memory superblock structure
-    superBlock = createBlock();
-    superBlock->blockSize = blockSize;
-    superBlock->fileSystemSize = blockSize*totalBlocks;
-    superBlock->iNodeTableLength = 0;//No files or directories in superdir to start
-    superBlock->rootDirPointer = 0;
 
-    //This function creates a brand new bit map
-    for (int i = 0; i < totalBlocks; ++i) {
+    //First create a brand new bit map
+    for (int i = 0; i < TOTAL_BLOCKS; ++i) {
         superBlock->freeBlocks[i] = 0;
     }
+
+    //Create an in memory superblock structure
+    requestFreeBlock();//This should mark the first block as not free.
+    superBlock = createBlock();
+    superBlock->blockSize = blockSize;
+    superBlock->fileSystemSize = blockSize*TOTAL_BLOCKS;
+    superBlock->iNodeTableLength = 1;//Just the root directory for now
+    superBlock->rootDirPointer = 0; //The rootDirectory iNode is located at position 0 in the table
+
+    //Set up the iNode table
+
+    //Create the root directory iNode
+    struct iNode rootDir;
+    rootDir.size=1; //Nothing in the root directory yet
+    rootDir.type=1;
+    rootDir.blocks[0] = requestFreeBlock(); //Don't bother checking if block is used, marks second block as not
+    strcpy(rootDir.name,"ROOT");
+
+    //Place the iNode in the table
+    iNodeTable[0]=rootDir;
+
+    //Write the superblock to disk
+    writeToDisk(0,1,superBlock);
+
+    //write the iNodeTable to disk
+    writeToDisk(1,1,iNodeTable);
+
 }
 
 //This function reads pre-existing information on the disk and loads the memory data structures
@@ -98,39 +132,24 @@ void loadSystemFromDisk(){
     int iNodeDiskSize = (superBlock->iNodeTableLength)* sizeof(struct iNode);
 
     //Set up the root directory iNode
-    read_blocks(superBlock->rootDirPointer,1,files);
-    int a =2;
+//    read_blocks(superBlock->rootDirPointer,1,files);
 
 }
-
-//This function will write the pre-existing data structures to disk
-void writeMemToDisk(){
-    
-    //Update the super block
-    writeToDisk(0,1,superBlock);
-    
-    //Update the iNodeTable
-    //Write the entire iNode table to memory if the iNode table is super long
-    //Figure out how many blocks the iNode table takes up
-    int blocks_iNodeTable = (sizeof(struct iNode)*INODE_TABLE_SIZE)/(superBlock->blockSize);
-    writeToDisk(1,blocks_iNodeTable,files);
-}
-
 
 //This function creates the file system
 void mksfs(int fresh){
 	if (fresh>=1){
 		/* Then we initialize a new disk */
-		init_fresh_disk(diskName,blockSize,totalBlocks); //Creates the fresh disk of propper size
+		init_fresh_disk(diskName,blockSize,TOTAL_BLOCKS); //Creates the fresh disk of propper size
         createNewSystem();//Creates the super block, sends it to disk
         
 	}else{
 		//Open an old disk, will use the same disk Name as before...
-        init_disk(diskName, blockSize, totalBlocks);
+        init_disk(diskName, blockSize, TOTAL_BLOCKS);
         loadSystemFromDisk();
 	}
     //Write the current cached memory to the disk
-    writeMemToDisk();
+//    writeMemToDisk();
 }
 
 
@@ -161,28 +180,28 @@ int sfs_fopen(char *name){
 /*
 	Closes given file by id
 */
-void sfs_fclose(int fileID){
-    printf("TESTING!!!! PASSS\n");
+int sfs_fclose(int fileID){
+    return 0;
 }
 
 /*
 	write buf characters into disk
 */
-void sfs_fwrite(int fileID, char *buf, int length){
-
+int sfs_fwrite(int fileID, char *buf, int length){
+    return 0;
 }
 
 /*
 	Read characters from disk into the buffer
 */
-void sfs_fread(int fileID, char *buf, int length){
-
+int sfs_fread(int fileID, char *buf, int length){
+    return 0;
 }
 /*
 	seek to the location from beginning
 */
-void sfs_fseek(int fileID,int loc){
-
+int sfs_fseek(int fileID,int loc){
+    return 0;
 } 
 
 /*
