@@ -14,8 +14,8 @@
 //TODO change these constants
 static char *diskName = "Evan_Knox_sfs";
 static const int blockSize = 1024;
-static const int TOTAL_BLOCKS = 4;
-static const int NAMESIZE = 16;
+static const int TOTAL_BLOCKS = 100;
+static const int NAMESIZE = 25;
 static const int EXTENSION_SIZE = 4;
 static const int INODE_TABLE_SIZE = 100;
 static const int MAX_OPEN_FILES = 100;
@@ -93,7 +93,7 @@ int addNodeToTable(struct iNode node){
             Main_iNodeTable->Table[i] = node;
             node.free = 1;
             Main_iNodeTable->numiNodes++;
-            return 1;
+            return i;
         }
     }
     printf("Unable to add iNode to table, table is full\n");
@@ -155,8 +155,9 @@ void createNewSystem(){
     struct iNode rootDir;
     rootDir.type=1;
     rootDir.free = 1;
-    rootDir.size = 0;
-    requestFreeBlock(&rootDir); //Request a block on disk to be allocated
+    rootDir.size = 1;
+    rootDir.blocks[0] = 0;
+
     strcpy(rootDir.name,"ROOT");
 
     //Create directory data structure, No files in it to start
@@ -166,6 +167,9 @@ void createNewSystem(){
     //Place the directory iNode in the iNode Table
     Main_iNodeTable = malloc(sizeof(struct iNodeTable));
     addNodeToTable(rootDir);
+
+    //The root Directory is always an open file
+    openfileTable[0]=1;
 
     //Write the superblock to disk
     writeToDisk(0,1,superBlock);
@@ -205,8 +209,8 @@ void mksfs(int fresh){
 //    writeMemToDisk();
 }
 
-struct iNode getInode(int id){
-    return Main_iNodeTable->Table[id];
+struct iNode *getInode(int id){
+    return &Main_iNodeTable->Table[id+1];
 }
 
 /*
@@ -247,13 +251,13 @@ int findINodeID(char *name){
     struct DirectoryEntry dirEntry;
     for (i = 0; i < RootDirectory.numFiles; ++i) {
         dirEntry = RootDirectory.files[i];
-        if (strcmp(dirEntry.fileName,name)==0 && dirEntry.used ==1){
+        if (strcmp(dirEntry.fileName,name) == 0){
             //The file is in the directory
             return RootDirectory.files[i].iNodeNum;
         }
     }
     if (i==RootDirectory.numFiles){
-        printf("Sorry can't find the file in the file table\n");
+        printf("File %s not in table\n",name);
         return -1;
     }
     return -1;
@@ -261,7 +265,7 @@ int findINodeID(char *name){
 
 //Returns the name of the iNode at a certain ID
 char * findINodeName(int id){
-    return RootDirectory.files[id].fileName;
+    return RootDirectory.files[id-1].fileName;
 }
 
 /*
@@ -270,8 +274,8 @@ char * findINodeName(int id){
 int sfs_getfilesize(const char* path){
     //First find the iNode for the file in the RootDirectory
     int id = findINodeID(path);
-    struct iNode node = getInode(id);
-    return node.size;
+    struct iNode *node = getInode(id);
+    return node->size;
 }
 
 /*
@@ -295,6 +299,10 @@ int createNewFile(char *fileName){
     newFile.fPointer.block = 0;
     newFile.fPointer.byte = 0;
 
+    for (int j = 0; j < TOTAL_BLOCKS; ++j) {
+        newFile.blocks[j] = 0;
+    }
+
     //Place the iNode in the inode table
     int iNodeId = addNodeToTable(newFile);
 
@@ -303,10 +311,17 @@ int createNewFile(char *fileName){
         printf("Error, too many files in the directory can't create another");
         return  -1;
     }else{
-        RootDirectory.numFiles++;
-        RootDirectory.files[RootDirectory.numFiles].fileName;
+        int i = 0;
+        while (RootDirectory.files[i].used == 1){
+            i++;
+        }
+        RootDirectory.files[i].used = 1;
+
+        strcpy(RootDirectory.files[i].fileName,fileName);
+
         //Make sure that the dir entry points to the propper iNode
         RootDirectory.files[RootDirectory.numFiles].iNodeNum = iNodeId;
+        RootDirectory.numFiles++;
     }
     return iNodeId; //Returns the id of the iNode in the iNode table
 
@@ -316,31 +331,44 @@ int createNewFile(char *fileName){
 */
 int sfs_fopen(char *name){
 
-    struct iNode node;
+    struct iNode *node;
     //First check to see if the file exists.
     int fileID = findINodeID(name);
     if ( fileID < 0){
         //Then the file exists and is in the table, add it to the open files table
         fileID = createNewFile(name); //Does not request a free block to write this file to
+        openfileTable[fileID] = 1;
+        //Load the files data from the disk into a buffer for writing
+        node = getInode(fileID);
+        node->memBlkPointer = malloc(node->size*blockSize);
+        for (int i = 0; i < node->size; ++i) {
+            read_blocks(node->blocks[i],1,node->memBlkPointer);
+        }
+    }else{
+        //the file already exists! Do we need to open it?
+        if (openfileTable[fileID]==1){
+            return -1;
+        }else{
+            //The file exists but isn't open
+            node = getInode(fileID);
+            node->memBlkPointer = malloc(node->size*blockSize);
+            for (int i = 0; i < node->size; ++i) {
+                read_blocks(node->blocks[i],1,node->memBlkPointer);
+            }
+        }
     }
-    openfileTable[fileID] = 1;
-    //Load the files data from the disk into a buffer for writing
-    node = getInode(fileID);
-    node.memBlkPointer = malloc(node.size*blockSize);
-    for (int i = 0; i < node.size; ++i) {
-        read_blocks(node.blocks[i],1,node.memBlkPointer);
-    }
+
     return fileID;
 }
 
 //this should write all of a files contents to the correct locations on disk
 int writeFileToDisk(int fileID){
     //First get the files iNode
-    struct iNode node = getInode(fileID);
+    struct iNode *node = getInode(fileID);
     //Then for every block the iNode owns write the correct buffer section
-    for (int i = 0; i < node.size; ++i) {
-        write_blocks(node.blocks[i],1,node.memBlkPointer);
-        node.memBlkPointer += blockSize;
+    for (int i = 0; i < node->size; ++i) {
+        write_blocks(node->blocks[i],1,node->memBlkPointer);
+        node->memBlkPointer += blockSize;
     }
     return 0;
 }
@@ -349,116 +377,149 @@ int writeFileToDisk(int fileID){
 /*
 	Closes given file by id
 */
-int sfs_fclose(int fileID){
+int sfs_fclose(int fileID) {
     for (int i = 0; i < MAX_OPEN_FILES; ++i) {
-        if (openfileTable[fileID]== 1){
-            printf("Closing the file with id: %d",fileID);
+        if (openfileTable[fileID] == 1) {
+            printf("Closing the file with id: %d\n", fileID);
             openfileTable[fileID] = 0;
-            //Write the files contents to disk
-            writeFileToDisk(fileID);
+            return 0;
         }
+        return -1;
     }
-    //Frees the memory that file took up
-    free(getInode(fileID).memBlkPointer);
-    return 0;
 }
 
 /*
 	write buf characters into disk
 */
-int sfs_fwrite(int fileID, char *buf, int length){
+    int sfs_fwrite(int fileID, char *buf, int length) {
 
-    char name[NAMESIZE];
-    strcpy(name,findINodeName(fileID));
-    sfs_fopen(name);
-    struct iNode node = getInode(fileID);
+        char name[NAMESIZE];
+        strcpy(name, findINodeName(fileID));
+        struct iNode *node = getInode(fileID);
 
-    //Write the whole length of the file into the disk
-    int byteswritten = 0;
+        //Write the whole length of the file into the disk
+        int byteswritten = 0;
 
-    for (byteswritten = 0; (byteswritten < length); ++byteswritten){
-        node.memBlkPointer[node.fPointer.block*node.fPointer.byte] = buf[byteswritten];
-
-        if (node.fPointer.byte == blockSize-1){
-            //We have no more space in this block, at the last byte
-            if (node.size < node.fPointer.block){
-                //Allocate another block
-                //First copy all current data into a buffer of correct size
-                char *buffer = malloc((node.size+1)*blockSize);
-                copyBytes(blockSize*node.size,node.memBlkPointer,buffer);
-                free(node.memBlkPointer);
-                //Then allocate the previous files
-                node.memBlkPointer = buffer;
-                requestFreeBlock(&node);
-            }
-            //Write to the next block in memory, because we have more blocks to write to
-            node.fPointer.block++;//inc file pointer to point to the next block
-            node.fPointer.byte = 0;//reset the byte pointer
-        }else{
-            node.fPointer.byte++;
+        //If this is the first write allocate a block!
+        if (node->size == 0) {
+            requestFreeBlock(node);
+            //Initially malloc 1 block in memory for the file
         }
-    };
 
-    //Write the file to the disk
-    return writeFileToDisk(fileID);
-}
+        //Allocate the buffer!
+        node->memBlkPointer = malloc(blockSize * node->size);
+        //If the file was already opened make sure to realoc the buffer
+        for (int i = 0; i < node->size; ++i) {
+            read_blocks(node->blocks[i], 1,node->memBlkPointer);
+        }
+
+        struct filePointer *fp = &node->fPointer;
+
+        for (byteswritten = 0; (byteswritten < length); ++byteswritten) {
+            node->memBlkPointer[fp->block * blockSize + fp->byte] = buf[byteswritten];
+            if (fp->byte == blockSize - 1) {
+                fp->block++;//inc file pointer to point to the next block
+                fp->byte = 0;//reset the byte pointer
+                //We have no more space in this block, at the last byte
+                if (node->size <= fp->block) {
+                    //Allocate another block
+                    //First copy all current data into a buffer of correct size
+                    char *buffer = malloc((node->size + 1) * blockSize);
+                    copyBytes(blockSize * node->size, node->memBlkPointer, buffer);
+
+                    //Then allocate the previous files, free the old memory
+
+
+                    node->memBlkPointer = buffer;
+                    requestFreeBlock(node);
+                }
+                //Write to the next block in memory, because we have more blocks to write to
+
+            } else {
+                fp->byte++;
+            }
+        }
+        free(node->memBlkPointer);
+
+
+        //Write the file to the disk
+        writeFileToDisk(fileID);
+        return byteswritten;
+    }
 
 /*
 	Read characters from disk into the buffer
 */
-int sfs_fread(int fileID, char *buf, int length){
-    char name[NAMESIZE];
-    strcpy(name,findINodeName(fileID));
-    sfs_fopen(name);
-    struct iNode node = getInode(fileID);
+    int sfs_fread(int fileID, char *buf, int length) {
+        //If the file isn't open then we can't read it
+        if (openfileTable[fileID] == 0)
+            return -1;
+        char name[NAMESIZE];
+        strcpy(name, findINodeName(fileID));
+        struct iNode *node = getInode(fileID);
 
+        //Copy the bytes into the buffer
+        //Read the bytes from the hardDisk into memory
+        node->memBlkPointer = malloc(blockSize*node->size);
+        for (int i = 0; i < node->size; ++i) {
+            read_blocks(node->blocks[i],1,node->memBlkPointer);
+        }
 
-    //Copy the bytes into the buffer
-    copyBytes(length,buf,&node.memBlkPointer);
-    return 0;
-}
+        //Depending on where the filepointer is read from there
+        int bytesRead = 0;
+        struct filePointer *fp = &node->fPointer;
+        int readLocation = fp->block*blockSize + fp->byte;
+
+        //Copy the right number of bytes into the buffer 
+        for (bytesRead = 0; bytesRead<length; ++bytesRead) {
+            buf[bytesRead] = node->memBlkPointer[readLocation];
+            readLocation++;
+        }
+        free(node->memBlkPointer);
+        return length;
+    }
 /*
 	Moves r/w pointer to a given location
 */
-int sfs_fseek(int fileID,int loc){
-    struct iNode node = getInode(fileID);
-    node.fPointer.block = loc/blockSize;
-    node.fPointer.byte = loc%blockSize;
-    return 0;
-} 
+    int sfs_fseek(int fileID, int loc) {
+        struct iNode *node = getInode(fileID);
+        node->fPointer.block = loc / blockSize;
+        node->fPointer.byte = loc % blockSize;
+        return 0;
+    }
 
 /*
 	removes a file from the filesystem
 */
-int sfs_remove(char *file){
-    int fileID = findINodeID(file);
-    struct iNode node = getInode(fileID);
-    free(node.memBlkPointer);
-    for (int i = 0; i < node.size; ++i) {
-        //for every block the iNode owns
-        superBlock->freeBlocks[node.blocks[i]] = 0;
-    }
-
-    superBlock->iNodeTableLength--;
-    superBlock->fileSystemSize--;
-
-    //Now do the directory and the iNodetable
-    RootDirectory.numFiles--;
-    struct DirectoryEntry dirEntry;
-    //Mark the directory slot as being unused
-    for (int i = 0; i < RootDirectory.numFiles; ++i) {
-        dirEntry = RootDirectory.files[i];
-        if (strcmp(dirEntry.fileName,file)==0 && dirEntry.used ==1){
-            //Remove the file
-            dirEntry.used = 0;
-            break;
+    int sfs_remove(char *file) {
+        int fileID = findINodeID(file);
+        struct iNode *node = getInode(fileID);
+        free(node->memBlkPointer);
+        for (int i = 0; i < node->size; ++i) {
+            //for every block the iNode owns
+            superBlock->freeBlocks[node->blocks[i]] = 0;
         }
+
+        superBlock->iNodeTableLength--;
+        superBlock->fileSystemSize--;
+
+        //Now do the directory and the iNodetable
+        RootDirectory.numFiles--;
+        struct DirectoryEntry dirEntry;
+        //Mark the directory slot as being unused
+        for (int i = 0; i < RootDirectory.numFiles; ++i) {
+            dirEntry = RootDirectory.files[i];
+            if (strcmp(dirEntry.fileName, file) == 0) {
+                //Remove the file
+                strcpy(dirEntry.fileName, "_deletedXdeleted_");
+                dirEntry.used = 0;
+                break;
+            }
+        }
+        //For the iNode table mark the iNode as being free as well
+        Main_iNodeTable->Table[fileID].free = 0;
+
+
+        return 0;
     }
-    //For the iNode table mark the iNode as being free as well
-    Main_iNodeTable->Table[fileID].free = 0;
-
-
-    return 0;
-}
-
 
